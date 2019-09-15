@@ -1,7 +1,13 @@
 
-import { PrimaryGeneratedColumn, Column, ManyToOne, ManyToMany, CreateDateColumn, Entity } from "typeorm";
+import { PrimaryGeneratedColumn, Column, ManyToOne, ManyToMany,
+        CreateDateColumn, Entity }
+    from "typeorm";
+
 import { User } from "./User";
-import { MinLength, IsIP, IsNumber, IsInt, Min, Max, IsString, MaxLength } from "class-validator";
+
+import { MinLength, IsIP, IsNumber, IsInt, Min, Max, IsString, MaxLength }
+    from "class-validator";
+
 import { Chart } from "./Chart";
 
 @Entity() // Cria uma tabela.
@@ -17,7 +23,7 @@ export class DataSource {
 
     @Column({nullable: false})
     @IsIP(4)
-    ip: string;
+    ipAddress: string;
 
     @Column({nullable: false})
     @IsInt()

@@ -39,17 +39,23 @@ Object.defineProperty(exports, "__esModule", { value: true });
 var express = require("express");
 var body_parser_1 = require("body-parser");
 var typeorm_1 = require("typeorm");
+var class_validator_1 = require("class-validator");
 var User_1 = require("./entities/User");
 var Chart_1 = require("./entities/Chart");
 var DataSource_1 = require("./entities/DataSource");
-var class_validator_1 = require("class-validator");
-var passport = require("passport");
-var passportLocal = require("passport-local");
-var session = require("express-session");
+var cors = require("cors");
 var flash = require("express-flash");
 var cookieParser = require("cookie-parser");
-/* ────────────────────────────────────────────────────────────────────────── */
-var PORT = 5000;
+var session = require("express-session");
+var passport = require("passport");
+var passportLocal = require("passport-local");
+var path = require("path");
+var fs = require("fs");
+var multer = require("multer");
+/*                            CONSTANTS DEFINITIONS                           */
+var PORT = 5000; // Porta em que o servidor escuta.
+var ROOT_DIR = path.resolve(__dirname + "/../"); // A raiz do servidor.
+var AVATAR_STORAGE = "/asset/avatar/"; // O diretório dos avatares.
 ;
 var InvalidOperation = /** @class */ (function () {
     function InvalidOperation() {
@@ -74,6 +80,7 @@ var NonExistentDataSourceIDs = /** @class */ (function () {
     }
     return NonExistentDataSourceIDs;
 }());
+/* ────────────────────────────────────────────────────────────────────────── */
 typeorm_1.createConnection({
     type: "mysql",
     host: "localhost",
@@ -89,18 +96,39 @@ typeorm_1.createConnection({
     synchronize: true,
 })
     .then(function (connection) { return __awaiter(_this, void 0, void 0, function () {
-    var app, usersRepository, dataSourcesRepository, chartsRepository, getUser, convertToDataSource;
+    var app, upload, usersRepository, dataSourcesRepository, chartsRepository, getUser, convertToDataSource;
     var _this = this;
     return __generator(this, function (_a) {
         app = express();
-        app.use(body_parser_1.json());
-        app.get("/", function (req, res, next) {
-            res.send("Hello");
-            next();
+        app.use(express.static(ROOT_DIR + "/build/"));
+        app.use(express.static(ROOT_DIR + "/public/"));
+        // A API e as rotas do FRONT-END são divididas em domínios específicos.
+        // As rotas da API possuem o prefixo "/api/*" e as demais rotas são rotas
+        // do browser apenas.
+        // Portanto, se a rota inicia-se com "/api/*" ele seque as demais rotas de-
+        // finidas no App. Caso contrário, é servida com o arquivo "index.html" para
+        // que o Single Page Application (SPA) do React funcione apropriadamente.
+        // // app.get("/api/*", (_, __, next) => {
+        //        // next("route");
+        //// });
+        //// app.get(["/login", "/home", "/chart", "/datadource"],
+        app.get("*", function (req, res, next) {
+            if (req.url.startsWith("/api/"))
+                next("route");
+            else
+                next();
+        }, function (_req, res) {
+            res.sendFile(ROOT_DIR + "/build/index.html");
         });
-        app.get("/login", function (req, res, next) {
-            res.send("Login");
-            next();
+        // Para fins de teste.
+        app.use(cors({
+            methods: ["GET", "POST", "PUT", "DELETE"],
+            credentials: true,
+            origin: true,
+        }));
+        app.use(body_parser_1.json());
+        upload = multer({
+            dest: path.resolve(ROOT_DIR + "/public" + AVATAR_STORAGE)
         });
         usersRepository = connection.getRepository(User_1.User);
         dataSourcesRepository = connection.getRepository(DataSource_1.DataSource);
@@ -183,52 +211,80 @@ typeorm_1.createConnection({
                 }
             });
         }); }));
-        app.post("/login", passport.authenticate("local", {
-            successRedirect: "/",
+        /* app.post("/api/login", passport.authenticate("local", {
+            successRedirect: "/home",
             failureRedirect: "/login",
             failureFlash: true,
-        }));
-        app.get("/logout", function (req, res, next) {
+        })); */
+        app.post("/api/login", function (req, res, next) {
+            passport.authenticate("local", function (error, user, info) {
+                console.log("User logged: " + JSON.stringify(user));
+                if (error || !user) {
+                    next(error);
+                }
+                else {
+                    req.logIn(user, function (error) {
+                        if (error)
+                            next(error);
+                        return res.sendStatus(200);
+                    });
+                }
+            })(req, res, next);
+        });
+        app.get("/api/logout", function (req, res, next) {
             req.logOut();
-            res.redirect("/login");
+            res.sendStatus(200);
             next();
         });
+        /*                                STATIC FILES                                */
+        // Utilizado para exibir os avatar dos usuários.
+        // app.use(express.static(AVATAR_STORAGE));
         /*                                API - USUÁRIO                               */
         app
-            .route("/users")
-            .post(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, userErrors, error_1;
+            .route("/api/users")
+            .post(upload.single("avatar"), function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
+            var user_1, userErrors, error_1;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
-                        user = new User_1.User();
-                        user = usersRepository.merge(user, req.body);
-                        return [4 /*yield*/, class_validator_1.validate(user)];
+                        _a.trys.push([0, 3, , 4]);
+                        user_1 = new User_1.User();
+                        user_1 = usersRepository.merge(user_1, req.body);
+                        // Apenas o link do avatar é posto aqui.
+                        user_1.avatar = AVATAR_STORAGE + req.file.filename;
+                        return [4 /*yield*/, class_validator_1.validate(user_1)];
                     case 1:
                         userErrors = _a.sent();
-                        _a.label = 2;
-                    case 2:
-                        _a.trys.push([2, 4, , 5]);
-                        if (userErrors.length > 0)
+                        // Retorna os dados cadastrado caso não haja erros. Se houver erros,
+                        // retorne os erros de validação.
+                        if (userErrors.length > 0) {
+                            // Remove o avatar caso ocorra algum erro no cadastro. Evita o
+                            // acumulo de arquivos inuteis no servidor.
+                            fs.unlink(ROOT_DIR + "/public" + user_1.avatar, function (error) {
+                                if (error)
+                                    throw error;
+                                console.log("trash removed: " + user_1.avatar);
+                            });
                             throw userErrors.map(function (error) { return error.constraints; });
+                        }
                         return [4 /*yield*/, connection.transaction(function (transaction) { return __awaiter(_this, void 0, void 0, function () { return __generator(this, function (_a) {
                                 switch (_a.label) {
-                                    case 0: return [4 /*yield*/, transaction.insert(User_1.User, user)];
+                                    case 0: return [4 /*yield*/, transaction.insert(User_1.User, user_1)];
                                     case 1: return [2 /*return*/, _a.sent()];
                                 }
                             }); }); })];
-                    case 3:
+                    case 2:
                         _a.sent();
                         // Não reenvie a senha.
-                        delete user.password;
-                        res.status(200).json(user);
-                        return [3 /*break*/, 5];
-                    case 4:
+                        delete user_1.password;
+                        res.status(200).json(user_1);
+                        return [3 /*break*/, 4];
+                    case 3:
                         error_1 = _a.sent();
                         next(error_1);
-                        return [3 /*break*/, 5];
-                    case 5: return [2 /*return*/];
+                        return [3 /*break*/, 4];
+                    case 4: return [2 /*return*/];
                 }
             });
         }); });
@@ -243,9 +299,74 @@ typeorm_1.createConnection({
             }
         });
         app
-            .route("/users/:id")
+            .route("/api/users")
+            .put(upload.single("avatar"), function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
+            var loggedUser_1, AVATAR_PATH, userError, error_2;
+            var _this = this;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        _a.trys.push([0, 3, , 4]);
+                        loggedUser_1 = req.user;
+                        if (req.file != null) {
+                            AVATAR_PATH = ROOT_DIR + "/public" + AVATAR_STORAGE;
+                            // Deleta o avatar antigo.
+                            fs.exists(AVATAR_STORAGE + loggedUser_1.avatar, (function (exists) {
+                                if (!exists)
+                                    return;
+                                fs.unlink(loggedUser_1.avatar, function (error) {
+                                    console.log(error);
+                                    throw error;
+                                });
+                            }));
+                            loggedUser_1.avatar = AVATAR_STORAGE + req.file.filename;
+                        }
+                        loggedUser_1 = usersRepository.merge(loggedUser_1, req.body);
+                        return [4 /*yield*/, class_validator_1.validate(loggedUser_1)];
+                    case 1:
+                        userError = _a.sent();
+                        if (userError.length > 0)
+                            throw userError.map(function (error) { return error.constraints; });
+                        return [4 /*yield*/, connection.transaction(function (trasaction) { return __awaiter(_this, void 0, void 0, function () { return __generator(this, function (_a) {
+                                switch (_a.label) {
+                                    case 0: return [4 /*yield*/, trasaction.update(User_1.User, loggedUser_1.id, loggedUser_1)];
+                                    case 1: return [2 /*return*/, _a.sent()];
+                                }
+                            }); }); })];
+                    case 2:
+                        _a.sent();
+                        delete loggedUser_1.password; // Não reenvia a senha.
+                        res.status(200).json(loggedUser_1);
+                        return [3 /*break*/, 4];
+                    case 3:
+                        error_2 = _a.sent();
+                        next(error_2);
+                        return [3 /*break*/, 4];
+                    case 4: return [2 /*return*/];
+                }
+            });
+        }); })
             .get(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, error_2;
+            var loggedUser;
+            return __generator(this, function (_a) {
+                try {
+                    loggedUser = req.user;
+                    delete loggedUser.password; // Não reenvia a senha.
+                    if (loggedUser)
+                        res.status(200).json(loggedUser);
+                    else
+                        res.sendStatus(400);
+                }
+                catch (error) {
+                    next(error);
+                }
+                return [2 /*return*/];
+            });
+        }); });
+        app
+            .route("/api/users/:id")
+            .get(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
+            var user, error_3;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -257,15 +378,15 @@ typeorm_1.createConnection({
                         res.json(user);
                         return [3 /*break*/, 3];
                     case 2:
-                        error_2 = _a.sent();
-                        next(error_2);
+                        error_3 = _a.sent();
+                        next(error_3);
                         return [3 /*break*/, 3];
                     case 3: return [2 /*return*/];
                 }
             });
         }); })
             .put(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var uid_1, user, userErrors, error_3;
+            var uid_1, user, userErrors, error_4;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
@@ -308,16 +429,16 @@ typeorm_1.createConnection({
                         }
                         return [3 /*break*/, 4];
                     case 3:
-                        error_3 = _a.sent();
+                        error_4 = _a.sent();
                         // Retorna os erros de validação.
-                        next(error_3);
+                        next(error_4);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
             });
         }); })
             .delete(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var uid, user_1, error_4;
+            var uid, user_2, error_5;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
@@ -326,11 +447,11 @@ typeorm_1.createConnection({
                         uid = parseInt(req.params.id);
                         return [4 /*yield*/, usersRepository.findOne(uid)];
                     case 1:
-                        user_1 = _a.sent();
+                        user_2 = _a.sent();
                         return [4 /*yield*/, connection.transaction(function (transaction) { return __awaiter(_this, void 0, void 0, function () {
                                 return __generator(this, function (_a) {
                                     switch (_a.label) {
-                                        case 0: return [4 /*yield*/, transaction.remove(User_1.User, user_1)];
+                                        case 0: return [4 /*yield*/, transaction.remove(User_1.User, user_2)];
                                         case 1:
                                             _a.sent();
                                             return [2 /*return*/];
@@ -342,8 +463,8 @@ typeorm_1.createConnection({
                         res.sendStatus(200);
                         return [3 /*break*/, 4];
                     case 3:
-                        error_4 = _a.sent();
-                        next(error_4);
+                        error_5 = _a.sent();
+                        next(error_5);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
@@ -351,9 +472,9 @@ typeorm_1.createConnection({
         }); });
         /*                              API - DATA SOURCE                             */
         app
-            .route("/datasources")
+            .route("/api/datasources")
             .get(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, dataSources, error_5;
+            var user, dataSources, error_6;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -369,15 +490,15 @@ typeorm_1.createConnection({
                         res.json(dataSources);
                         return [3 /*break*/, 4];
                     case 3:
-                        error_5 = _a.sent();
-                        next(error_5);
+                        error_6 = _a.sent();
+                        next(error_6);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
             });
         }); })
             .post(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, dataSource_1, dataSourceErrors, error_6;
+            var user, dataSource_1, dataSourceErrors, error_7;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
@@ -403,15 +524,15 @@ typeorm_1.createConnection({
                         res.json(dataSource_1);
                         return [3 /*break*/, 5];
                     case 4:
-                        error_6 = _a.sent();
-                        next(error_6);
+                        error_7 = _a.sent();
+                        next(error_7);
                         return [3 /*break*/, 5];
                     case 5: return [2 /*return*/];
                 }
             });
         }); });
         app
-            .route("/datasources/:id")
+            .route("/api/datasources/:id")
             .get(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
             var user, dataSourceID, dataSource;
             return __generator(this, function (_a) {
@@ -436,7 +557,7 @@ typeorm_1.createConnection({
             });
         }); })
             .put(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, dataSourceID_1, dataSource_2, dataSourceErrors, error_7;
+            var user, dataSourceID_1, dataSource_2, dataSourceErrors, error_8;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
@@ -468,15 +589,15 @@ typeorm_1.createConnection({
                         res.json(dataSource_2);
                         return [3 /*break*/, 6];
                     case 5:
-                        error_7 = _a.sent();
-                        next(error_7);
+                        error_8 = _a.sent();
+                        next(error_8);
                         return [3 /*break*/, 6];
                     case 6: return [2 /*return*/];
                 }
             });
         }); })
             .delete(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, dataSourceID, dataSource, error_8;
+            var user, dataSourceID, dataSource, error_9;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
@@ -503,8 +624,8 @@ typeorm_1.createConnection({
                         res.sendStatus(200);
                         return [3 /*break*/, 6];
                     case 5:
-                        error_8 = _a.sent();
-                        next(error_8);
+                        error_9 = _a.sent();
+                        next(error_9);
                         return [3 /*break*/, 6];
                     case 6: return [2 /*return*/];
                 }
@@ -512,9 +633,9 @@ typeorm_1.createConnection({
         }); });
         /*                                 API - CHART                                */
         app
-            .route("/charts")
+            .route("/api/charts")
             .get(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, charts, error_9;
+            var user, charts, error_10;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -531,15 +652,15 @@ typeorm_1.createConnection({
                         res.status(200).json(charts);
                         return [3 /*break*/, 4];
                     case 3:
-                        error_9 = _a.sent();
-                        next(error_9);
+                        error_10 = _a.sent();
+                        next(error_10);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
             });
         }); })
             .post(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, _a, chart_1, chartErrors, error_10;
+            var user, _a, chart_1, chartErrors, error_11;
             var _this = this;
             return __generator(this, function (_b) {
                 switch (_b.label) {
@@ -578,17 +699,17 @@ typeorm_1.createConnection({
                         res.json(chart_1);
                         return [3 /*break*/, 7];
                     case 6:
-                        error_10 = _b.sent();
-                        next(error_10);
+                        error_11 = _b.sent();
+                        next(error_11);
                         return [3 /*break*/, 7];
                     case 7: return [2 /*return*/];
                 }
             });
         }); });
         app
-            .route("/charts/:id")
+            .route("/api/charts/:id")
             .get(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, cid, chart, error_11;
+            var user, cid, chart, error_12;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -606,15 +727,15 @@ typeorm_1.createConnection({
                         res.json(chart);
                         return [3 /*break*/, 4];
                     case 3:
-                        error_11 = _a.sent();
-                        next(error_11);
+                        error_12 = _a.sent();
+                        next(error_12);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
             });
         }); })
             .put(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, cid, chart_2, _a, chartErrors, error_12;
+            var user, cid, chart_2, _a, chartErrors, error_13;
             var _this = this;
             return __generator(this, function (_b) {
                 switch (_b.label) {
@@ -656,15 +777,15 @@ typeorm_1.createConnection({
                         res.json(chart_2);
                         return [3 /*break*/, 8];
                     case 7:
-                        error_12 = _b.sent();
-                        next(error_12);
+                        error_13 = _b.sent();
+                        next(error_13);
                         return [3 /*break*/, 8];
                     case 8: return [2 /*return*/];
                 }
             });
         }); })
             .delete(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-            var user, chartID, chart_3, error_13;
+            var user, chartID, chart_3, error_14;
             var _this = this;
             return __generator(this, function (_a) {
                 switch (_a.label) {
@@ -690,8 +811,8 @@ typeorm_1.createConnection({
                         res.sendStatus(200);
                         return [3 /*break*/, 5];
                     case 4:
-                        error_13 = _a.sent();
-                        next(error_13);
+                        error_14 = _a.sent();
+                        next(error_14);
                         return [3 /*break*/, 5];
                     case 5: return [2 /*return*/];
                 }
@@ -701,6 +822,7 @@ typeorm_1.createConnection({
         app.use(function (error, req, res, next) {
             if (res.headersSent)
                 next(error);
+            console.log(error);
             if ("code" in error && "message" in error) {
                 res.status(400).json({
                     code: error.code,

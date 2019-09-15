@@ -1,0 +1,18 @@
+.chart-card .chart-features {
+    width: 100%;
+}
+
+.chart-card .chart-features tr {
+    border-bottom: 1px dashed darkgray;
+    text-align: left;
+    transition: background-color 300ms linear;
+}
+
+.chart-card .chart-features tr:hover {
+    background-color: darkgray;
+}
+
+.chart-card .chart-features tr > td:first-child {
+    font-weight: 600;
+    width: 50%;
+}

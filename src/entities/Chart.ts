@@ -34,6 +34,9 @@ export class Chart {
     })
     chartType: EChartType;
 
+    @Column()
+    buffer: number;
+
     @ManyToMany(type => DataSource, dataSources => dataSources.charts,
         {cascade: true})
     @JoinTable()

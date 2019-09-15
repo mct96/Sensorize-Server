@@ -50,6 +50,10 @@ var Chart = /** @class */ (function () {
         __metadata("design:type", String)
     ], Chart.prototype, "chartType", void 0);
     __decorate([
+        typeorm_1.Column(),
+        __metadata("design:type", Number)
+    ], Chart.prototype, "buffer", void 0);
+    __decorate([
         typeorm_1.ManyToMany(function (type) { return DataSource_1.DataSource; }, function (dataSources) { return dataSources.charts; }, { cascade: true }),
         typeorm_1.JoinTable(),
         __metadata("design:type", Array)

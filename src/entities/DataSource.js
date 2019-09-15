@@ -35,7 +35,7 @@ var DataSource = /** @class */ (function () {
         typeorm_1.Column({ nullable: false }),
         class_validator_1.IsIP(4),
         __metadata("design:type", String)
-    ], DataSource.prototype, "ip", void 0);
+    ], DataSource.prototype, "ipAddress", void 0);
     __decorate([
         typeorm_1.Column({ nullable: false }),
         class_validator_1.IsInt(),

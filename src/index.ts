@@ -1,22 +1,33 @@
 import * as express from "express";
-import {json} from "body-parser";
+import {json}       from "body-parser";
+
 import { createConnection } from "typeorm";
-import { User } from "./entities/User";
-import { Chart } from "./entities/Chart";
-import { DataSource } from "./entities/DataSource";
-import { validate } from "class-validator";
+import { validate }         from "class-validator";
 
-import passport = require("passport");
+import { User }             from "./entities/User";
+import { Chart }            from "./entities/Chart";
+import { DataSource }       from "./entities/DataSource";
+
+import cors          = require("cors");
+import flash         = require("express-flash");
+import cookieParser  = require("cookie-parser");
+import session       = require("express-session");
+
+import passport      = require("passport");
 import passportLocal = require("passport-local");
-import session = require("express-session");
-import flash = require("express-flash");
-import cookieParser = require("cookie-parser");
+
+const path = require("path");
+import * as fs from "fs";
+import * as multer from "multer";
+
+/*                            CONSTANTS DEFINITIONS                           */
+
+const PORT = 5000;  // Porta em que o servidor escuta.
+const ROOT_DIR = path.resolve(__dirname + "/../"); // A raiz do servidor.
+const AVATAR_STORAGE = "/asset/avatar/"; // O diretório dos avatares.
 
 /* ────────────────────────────────────────────────────────────────────────── */
 
-const PORT = 5000;
-
-/* ────────────────────────────────────────────────────────────────────────── */
 interface IError {
     code: number;
     message: string;
@@ -40,6 +51,8 @@ class NonExistentDataSourceIDs implements IError {
     message = "Some Data Source IDs don't exits.";
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+
 createConnection({
     type: "mysql",
     host: "localhost",
@@ -58,19 +71,42 @@ createConnection({
 .then(async connection => {
     const app = express();
 
+    app.use(express.static(ROOT_DIR + "/build/"));
+    app.use(express.static(ROOT_DIR + "/public/"));
+
+    // A API e as rotas do FRONT-END são divididas em domínios específicos.
+    // As rotas da API possuem o prefixo "/api/*" e as demais rotas são rotas
+    // do browser apenas.
+    // Portanto, se a rota inicia-se com "/api/*" ele seque as demais rotas de-
+    // finidas no App. Caso contrário, é servida com o arquivo "index.html" para
+    // que o Single Page Application (SPA) do React funcione apropriadamente.
+    // // app.get("/api/*", (_, __, next) => {
+    //        // next("route");
+    //// });
+
+    //// app.get(["/login", "/home", "/chart", "/datadource"],
+    app.get("*", (req, res, next) => {
+            if (req.url.startsWith("/api/"))
+                next("route");
+            else
+                next();
+        }, (_req, res) => {
+            res.sendFile(ROOT_DIR + "/build/index.html")
+        });
+
+    // Para fins de teste.
+    app.use(cors({
+        methods: ["GET", "POST", "PUT", "DELETE"],
+        credentials: true,
+        origin: true,
+    }));
+
     app.use(json());
 
-    app.get("/", (req, res, next) => {
-        res.send("Hello");
-        next();
+    // Para realizar o upload de imagens.
+    const upload = multer({
+        dest: path.resolve(ROOT_DIR + "/public" + AVATAR_STORAGE)
     });
-
-    app.get("/login", (req, res, next) => {
-        res.send("Login");
-        next();
-    });
-
-
 
     const usersRepository       = connection.getRepository(User);
     const dataSourcesRepository = connection.getRepository(DataSource);
@@ -137,32 +173,66 @@ createConnection({
             done(null, false, {message: "Fail!"});
     }));
 
-    app.post("/login", passport.authenticate("local", {
-        successRedirect: "/",
+    /* app.post("/api/login", passport.authenticate("local", {
+        successRedirect: "/home",
         failureRedirect: "/login",
         failureFlash: true,
-    }));
+    })); */
 
-    app.get("/logout", (req, res, next) => {
+    app.post("/api/login", (req, res, next) => {
+        passport.authenticate("local", function(error, user, info) {
+            console.log("User logged: " + JSON.stringify(user));
+            if (error || !user) {
+                next(error);
+
+            } else {
+                req.logIn(user, function (error) {
+                    if (error) next(error);
+
+                    return res.sendStatus(200);
+                });
+
+            }
+        })(req, res, next);
+    });
+
+    app.get("/api/logout", (req, res, next) => {
         req.logOut();
-        res.redirect("/login");
+        res.sendStatus(200);
         next();
     });
 
+/*                                STATIC FILES                                */
+
+    // Utilizado para exibir os avatar dos usuários.
+    // app.use(express.static(AVATAR_STORAGE));
+
 /*                                API - USUÁRIO                               */
     app
-    .route("/users")
-    .post(async (req, res, next) => {
-        let user = new User();
-        user = usersRepository.merge(user, req.body);
-
-        const userErrors = await validate(user);
-
-        // Retorna os dados cadastrado caso não haja erros. Se houver erros,
-        // retorne os erros de validação.
+    .route("/api/users")
+    .post(upload.single("avatar"), async (req, res, next) => {
         try {
-            if (userErrors.length > 0)
+            let user = new User();
+            user = usersRepository.merge(user, req.body);
+
+            // Apenas o link do avatar é posto aqui.
+            user.avatar = AVATAR_STORAGE +  req.file.filename;
+
+            const userErrors = await validate(user);
+
+            // Retorna os dados cadastrado caso não haja erros. Se houver erros,
+            // retorne os erros de validação.
+            if (userErrors.length > 0) {
+
+                // Remove o avatar caso ocorra algum erro no cadastro. Evita o
+                // acumulo de arquivos inuteis no servidor.
+                fs.unlink(ROOT_DIR + "/public" + user.avatar, function(error) {
+                    if (error) throw error;
+                    console.log("trash removed: " + user.avatar);
+                });
+
                 throw userErrors.map(error => error.constraints);
+            }
 
             await connection.transaction(async transaction =>
                 await transaction.insert(User, user)
@@ -190,7 +260,62 @@ createConnection({
     })
 
     app
-    .route("/users/:id")
+    .route("/api/users")
+    .put(upload.single("avatar"), async (req, res, next)=>{
+        try {
+            let loggedUser = req.user as User;
+
+            if (req.file != null) {
+                const AVATAR_PATH = ROOT_DIR + "/public" + AVATAR_STORAGE;
+                // Deleta o avatar antigo.
+                fs.exists(AVATAR_STORAGE + loggedUser.avatar, (exists => {
+                    if (!exists) return;
+
+                    fs.unlink(loggedUser.avatar, function (error) {
+                        console.log(error);
+                        throw error;
+                    });
+                }));
+
+                loggedUser.avatar = AVATAR_STORAGE + req.file.filename;
+            }
+
+            loggedUser = usersRepository.merge(loggedUser, req.body);
+
+
+            const userError = await validate(loggedUser);
+
+            if (userError.length > 0)
+                throw userError.map(error => error.constraints);
+
+            await connection.transaction(async trasaction =>
+                await trasaction.update(User, loggedUser.id, loggedUser));
+
+            delete loggedUser.password; // Não reenvia a senha.
+
+            res.status(200).json(loggedUser);
+        } catch (error) {
+            next(error);
+        }
+    })
+    .get(async (req, res, next) => {
+        try {
+            const loggedUser = req.user as User;
+
+            delete loggedUser.password; // Não reenvia a senha.
+
+            if (loggedUser)
+                res.status(200).json(loggedUser);
+            else
+                res.sendStatus(400);
+        } catch (error) {
+            next(error);
+        }
+    });
+
+
+    app
+    .route("/api/users/:id")
     .get(async (req, res, next) => {
         try {
             const user = await getUser(req.params.id);
@@ -235,7 +360,6 @@ createConnection({
         } catch(error) {
             // Retorna os erros de validação.
             next(error);
-            // res.status(400).json({error: error});
         }
     })
     .delete(async (req, res, next) => { // Remove um usuário.
@@ -258,7 +382,7 @@ createConnection({
 /*                              API - DATA SOURCE                             */
 
     app
-    .route("/datasources")
+    .route("/api/datasources")
     .get(async (req, res, next) => {
         try {
             const user = await getUser((req.user as User).id);
@@ -298,7 +422,7 @@ createConnection({
     });
 
     app
-    .route("/datasources/:id")
+    .route("/api/datasources/:id")
     .get(async (req, res, next) => {
         const user = await getUser((req.user as User).id);
 
@@ -361,7 +485,7 @@ createConnection({
 
 /*                                 API - CHART                                */
     app
-    .route("/charts")
+    .route("/api/charts")
     .get(async (req, res, next) => {
         try {
             const user = await getUser((req.user as User).id);
@@ -415,7 +539,7 @@ createConnection({
 
 
     app
-    .route("/charts/:id")
+    .route("/api/charts/:id")
     .get(async (req, res, next) => {
         try {
             const user = await getUser((req.user as User).id);
@@ -488,6 +612,8 @@ createConnection({
     app.use((error, req, res: express.Response, next) => {
         if (res.headersSent)
             next(error);
+
+        console.log(error);
 
         if ("code" in error && "message" in error) {
 
