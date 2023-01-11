@@ -26,7 +26,7 @@
     "@types/node": "^12.7.5",
     "@types/passport": "^1.0.1",
     "@types/passport-local": "^1.0.33",
-    "class-validator": "^0.10.0",
+    "class-validator": "^0.14.0",
     "cookie-parser": "^1.4.4",
     "cors": "^2.8.5",
     "express": "^4.17.1",
